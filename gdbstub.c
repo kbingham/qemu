@@ -780,6 +780,79 @@ static int is_query_packet(const char *p, const char *query, char separator)
         (p[query_len] == '\0' || p[query_len] == separator);
 }
 
+static int st_gdb_handle_packet(GDBState *s, const char *p)
+{
+    CPUARMState *env = (CPUARMState *)s->c_cpu->env_ptr;
+    ARMCPU *cpu = arm_env_get_cpu(env);
+    static const ARMCPRegInfo *ri;
+
+    char buf[MAX_PACKET_LENGTH];
+    int is64 = 0;
+    uint64_t val;
+
+    int crn = 0, crm = 0, op1 = 0, op2 = 0;
+
+    buf[0] = '\0';
+
+    if (strncmp(p, "version", 7) == 0)
+	sprintf(buf, "st");
+
+    /* MRC{cond} P15,<Opcode_1>,<Rd>,<CRn>,<CRm>,<Opcode_2> */
+    /* #define RD_CP15_SCR0    "cp15 c1 0 c0 0" */
+    else if (strncmp(p, "cp15 c1 0 c0 0", 14) == 0) {
+	    crn = 1; op1 = 0; crm = 0; op2 = 0;
+	    ri = get_arm_cp_reginfo( cpu->cp_regs,
+	                ENCODE_CP_REG(15, is64, 0, crn, crm, op1, op2));
+
+	    val = read_raw_cp_reg(env,ri);
+	    sprintf(buf, "0x%lx", val);
+    }
+
+    /* MRC{cond} P15,<Opcode_1>,<Rd>,<CRn>,<CRm>,<Opcode_2> */
+    /* #define RD_CP15_TTBR0   "cp15 c2 0 c0 0" */
+    /* #define WR_CP15_TTBR0   "cp15 c2 0 c0 0 0x%x" */
+    else if (strncmp(p, "cp15 c2 0 c0 0", 14) == 0) {
+	    crn = 2; op1 = 0; crm = 0; op2 = 0;
+	    ri = get_arm_cp_reginfo( cpu->cp_regs,
+	                ENCODE_CP_REG(15, is64, 0, crn, crm, op1, op2));
+
+	    val = read_raw_cp_reg(env,ri);
+
+	    p += 14; /* Move to the end of the READ string */
+	    if (strlen(p))
+	    {
+		    sscanf(p, "%lx", &val);
+		    write_raw_cp_reg(env, ri, val);
+	    }
+
+	    sprintf(buf, "0x%lx", val);
+    }
+
+    /* MRC{cond} P15,<Opcode_1>,<Rd>,<CRn>,<CRm>,<Opcode_2> */
+    /* #define RD_CP15_ASID    "cp15 c13 0 c0 1" */
+    /* #define WR_CP15_ASID    "cp15 c13 0 c0 1 0x%x" */
+    else if (strncmp(p, "cp15 c13 0 c0 1", 15) == 0) {
+	    crn = 13; op1 = 0; crm = 0; op2 = 1;
+	    ri = get_arm_cp_reginfo( cpu->cp_regs,
+	                ENCODE_CP_REG(15, is64, 0, crn, crm, op1, op2));
+
+	    val = read_raw_cp_reg(env,ri);
+
+	    p += 15; /* Move to the end of the READ string */
+	    if (strlen(p))
+	    {
+		    sscanf(p, "%lx", &val);
+		    write_raw_cp_reg(env, ri, val);
+	    }
+
+	    sprintf(buf, "0x%lx", env->cp15.contextidr_el[1]);
+    }
+
+    put_packet(s, buf); // We must send at least an empty packet here
+
+    return 0;
+}
+
 static int gdb_handle_packet(GDBState *s, const char *line_buf)
 {
     CPUState *cpu;
@@ -1212,6 +1285,11 @@ static int gdb_handle_packet(GDBState *s, const char *line_buf)
         }
         if (is_query_packet(p, "Attached", ':')) {
             put_packet(s, GDB_ATTACHED);
+            break;
+        }
+        if (strncmp(p, "st ", 3) == 0) {
+            if (st_gdb_handle_packet(s, p+3))
+                goto unknown_command;
             break;
         }
         /* Unrecognised 'q' command.  */

@@ -787,10 +787,16 @@ static int st_gdb_handle_packet(GDBState *s, const char *p)
     static const ARMCPRegInfo *ri;
 
     char buf[MAX_PACKET_LENGTH];
+    char * bufp = buf;
+    int i = 0;
     int is64 = 0;
     uint64_t val;
 
     int crn = 0, crm = 0, op1 = 0, op2 = 0;
+
+    int cur_el = arm_current_el(env);
+    if (cur_el == 0)
+	    cur_el = 1;
 
     buf[0] = '\0';
 
@@ -800,11 +806,22 @@ static int st_gdb_handle_packet(GDBState *s, const char *p)
     /* MRC{cond} P15,<Opcode_1>,<Rd>,<CRn>,<CRm>,<Opcode_2> */
     /* #define RD_CP15_SCR0    "cp15 c1 0 c0 0" */
     else if (strncmp(p, "cp15 c1 0 c0 0", 14) == 0) {
+	    for (i=0; i<4; i++)
+		    bufp += sprintf(bufp, "0x%lx ", env->cp15.sctlr_el[i]);
+
+	    printf("%s: SCR [%s]->[%s]\n", __FUNCTION__, p, buf);
+
+	    /* could cache these reg structs to reduce lookups */
 	    crn = 1; op1 = 0; crm = 0; op2 = 0;
 	    ri = get_arm_cp_reginfo( cpu->cp_regs,
 	                ENCODE_CP_REG(15, is64, 0, crn, crm, op1, op2));
 
 	    val = read_raw_cp_reg(env,ri);
+	    printf("Got Register %s -> [0x%lx] el[%d]\n", ri->name, val, arm_current_el(env));
+
+	    if (val != env->cp15.sctlr_el[3])
+		    printf("%s: Value read [0x%lx] does not match sctlr_el[3] [0x%lx]\n", __FUNCTION__, val, env->cp15.sctlr_el[3]);
+
 	    sprintf(buf, "0x%lx", val);
     }
 
@@ -812,16 +829,28 @@ static int st_gdb_handle_packet(GDBState *s, const char *p)
     /* #define RD_CP15_TTBR0   "cp15 c2 0 c0 0" */
     /* #define WR_CP15_TTBR0   "cp15 c2 0 c0 0 0x%x" */
     else if (strncmp(p, "cp15 c2 0 c0 0", 14) == 0) {
+	    for (i=0; i<4; i++)
+		    bufp += sprintf(bufp, "0x%lx ", env->cp15.ttbr0_el[i]);
+
+
+	    printf("%s: TTBR0 [%s]->[%s]\n", __FUNCTION__, p, buf);
+
+	    /* could cache these reg structs to reduce lookups */
 	    crn = 2; op1 = 0; crm = 0; op2 = 0;
 	    ri = get_arm_cp_reginfo( cpu->cp_regs,
 	                ENCODE_CP_REG(15, is64, 0, crn, crm, op1, op2));
 
 	    val = read_raw_cp_reg(env,ri);
+	    printf("Got Register %s -> [0x%lx] el[%d]\n", ri->name, val, arm_current_el(env));
+
+	    if (val != env->cp15.ttbr0_el[3])
+		    printf("%s: Value read [0x%lx] does not match ttbr0_el[3] [0x%lx]\n", __FUNCTION__, val, env->cp15.ttbr0_el[3]);
 
 	    p += 14; /* Move to the end of the READ string */
 	    if (strlen(p))
 	    {
 		    sscanf(p, "%lx", &val);
+		    printf("%s: %s requests a write of 0x%lu strlen = %lu\n", __FUNCTION__, p, val, strlen(p));
 		    write_raw_cp_reg(env, ri, val);
 	    }
 
@@ -832,21 +861,36 @@ static int st_gdb_handle_packet(GDBState *s, const char *p)
     /* #define RD_CP15_ASID    "cp15 c13 0 c0 1" */
     /* #define WR_CP15_ASID    "cp15 c13 0 c0 1 0x%x" */
     else if (strncmp(p, "cp15 c13 0 c0 1", 15) == 0) {
+
+	    /* CONTEXTIDR_EL1 defines read/write */
+	    for (i=0; i<4; i++)
+		    bufp += sprintf(bufp, "0x%lx ", env->cp15.contextidr_el[i]);
+
+	    printf("%s: ASID/Context [%s]->[%s]\n", __FUNCTION__, p, buf);
+
+	    /* could cache these reg structs to reduce lookups */
 	    crn = 13; op1 = 0; crm = 0; op2 = 1;
 	    ri = get_arm_cp_reginfo( cpu->cp_regs,
 	                ENCODE_CP_REG(15, is64, 0, crn, crm, op1, op2));
 
 	    val = read_raw_cp_reg(env,ri);
+	    printf("Got Register %s -> [0x%lx] el[%d]\n", ri->name, val, arm_current_el(env));
+
+	    if (val != env->cp15.contextidr_el[1])
+		    printf("%s: Value read [0x%lx] does not match contextidr_el[1] [0x%lx]\n", __FUNCTION__, val, env->cp15.contextidr_el[1]);
 
 	    p += 15; /* Move to the end of the READ string */
 	    if (strlen(p))
 	    {
 		    sscanf(p, "%lx", &val);
+		    printf("%s: %s requests a write of 0x%ul strlen = %lu\n", __FUNCTION__, p, val, strlen(p));
 		    write_raw_cp_reg(env, ri, val);
 	    }
 
 	    sprintf(buf, "0x%lx", env->cp15.contextidr_el[1]);
     }
+
+    printf("%s: [%s]->[%s]\n", __FUNCTION__, p, buf);
 
     put_packet(s, buf); // We must send at least an empty packet here
 
